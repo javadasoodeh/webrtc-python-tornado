@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebRTC</title>
+
+    <link rel="shortcut icon" href="{{ static_url('favicon.ico') }}">
+    <link rel="stylesheet" href="{{ static_url('custom.css') }}">
+
+</head>
+<body>
+
+
+
+
+    <video id="selfView" autoplay></video>
+    <video id="remoteView" autoplay> </video>
+
+    <div>
+        <button id="call">call</button>
+    </div>
+    <script type="text/javascript">
+
+
+
+        const selfView = document.querySelector('#selfView');
+        const remoteView = document.querySelector('#remoteView');
+        const call = document.querySelector('#call');
+
+        // signalling
+        const wsUrl = 'WS://localhost:8383/websocket';
+        {#const wsUrl = 'WSS://jitsimk.ir/websocket';#}
+        const signaling  = new WebSocket(wsUrl);
+
+
+        const constraints = {audio: true, video: {
+                width: {exact: 320}, height: {exact: 240},
+                "frameRate": 10
+            }};
+        const configuration = {iceServers: [
+                {
+                    urls: 'stun:stun.l.google.com:19302'
+                },
+                {#{
+                    urls: "turn:185.211.59.123:5349",
+                    username: "",
+                    credential: ""
+                }#}
+
+            ]};
+        const pc = new RTCPeerConnection(configuration);
+
+
+        // send any ice candidates to the other peer
+        pc.onicecandidate = ({candidate}) => {
+            if (candidate) {
+                console.log("send candidate", candidate);
+                signaling.send(JSON.stringify({candidate: candidate}));
+            }
+        };
+
+        // let the "negotiationneeded" event trigger offer generation
+        pc.onnegotiationneeded = async () => {
+          try {
+            await pc.setLocalDescription(await pc.createOffer());
+            // send the offer to the other peer
+            if (pc.localDescription) {
+                console.log("send SDP", pc.localDescription);
+                signaling.send(JSON.stringify({desc: pc.localDescription}));
+            }
+          } catch (err) {
+            console.error(err);
+          }
+        };
+
+        // once media for a remote track arrives, show it in the remote video element
+        pc.ontrack = (event) => {
+          // don't set srcObject again if it is already set.
+          if (remoteView.srcObject) return;
+          remoteView.srcObject = event.streams[0];
+        };
+
+
+        // call start() to initiate
+        async function start() {
+            try {
+                // get a local stream, show it in a self-view and add it to be sent
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+                selfView.srcObject = stream;
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        call.addEventListener('click', function(){
+            start();
+        });
+
+        signaling.onopen = function (evt) {
+            console.log('ws open()');
+        };
+        signaling.onerror = function (err) {
+            console.error('ws onerror() ERR:', err);
+        };
+        signaling.onmessage = async (res) => {
+            const data = JSON.parse(res.data);
+            const desc = data.desc;
+            const candidate = data.candidate;
+            console.log("SDP received ", desc)
+            console.log("candidate received ", candidate)
+            try {
+                if (desc) {
+                    // if we get an offer, we need to reply with an answer
+                    if (desc.type === 'offer') {
+                        await pc.setRemoteDescription(desc);
+                        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+                        await pc.setLocalDescription(await pc.createAnswer());
+                        signaling.send(JSON.stringify({desc: pc.localDescription}));
+                    } else if (desc.type === 'answer') {
+                        await pc.setRemoteDescription(desc);
+                    } else {
+                        console.log('Unsupported SDP type. Your code may differ here.');
+                    }
+                } else if (candidate) {
+                    await pc.addIceCandidate(candidate);
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        };
+
+
+
+
+
+
+
+    </script>
+</body>
+</html>

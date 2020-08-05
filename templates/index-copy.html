@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebRTC</title>
+
+    <link rel="shortcut icon" href="{{ static_url('favicon.ico') }}">
+    <link rel="stylesheet" href="{{ static_url('custom.css') }}">
+
+</head>
+<body>
+
+    <h2>video stream using WebRTC !!</h2>
+
+    <label for="camera">Video : </label><select id="camera"></select>
+
+
+    <video id="videoArea" autoplay></video>
+    <video id="theirVideo" > </video>
+
+    <button autofocus="true" id="takeProfilePicBtn" type="button"> Create a Profile Picture </button>
+
+    <canvas id="profilePicCanvas" style="display: none"></canvas>
+
+    <img id="profilePictureOutput" alt="profile picture" src="" title="profile picture">
+
+
+    <div class="chat-messages">
+        <div class="message-box">
+            <div class="name">java</div>
+            <span> : </span>
+            <div class="message">salam ?</div>
+        </div>
+    </div>
+
+
+    <div class="send-message-box">
+        <div><label>
+            <input id="message" type="text" placeholder="write your message ....">
+        </label></div>
+        <div>
+            <button id="send-message-btn" type="button">send</button>
+        </div>
+        <div>
+            <button id="call-btn" type="button">call</button>
+        </div>
+    </div>
+
+    <div>
+        <div id="signalArea">Signal Messages : <br/></div>
+    </div>
+
+    <script type="text/javascript">
+
+
+
+        const videoArea = document.querySelector('#videoArea');
+        const theirVideo = document.querySelector('#theirVideo');
+        const callBtn = document.querySelector('#call-btn');
+
+        // maintain rtc peer connection
+        let rtcPeerConnection;
+
+        const onSuccess = (stream) => {
+            console.log("success !!! we have a stream");
+            console.log(stream);
+            if (!rtcPeerConnection){
+                startSignalling();
+            }
+
+            stream.getTracks().forEach((track) => rtcPeerConnection.addTrack(track, stream));
+            videoArea.srcObject = stream;
+            {#videoArea.onloadedmetadata = function(e){
+                videoArea.play();
+            }#}
+        };
+
+        const onError = (error) => {
+            console.log("An error occurred with getUserMedia :", error);
+        };
+
+        const startStream = () => {
+
+            {#let videoSource = videoSelect.value;#}
+            const constraints = {
+                audio: true,
+                video: {
+                    mandatory: {
+                        minWidth: 320,
+                        maxWidth: 640,
+                        minHeight: 320,
+                        maxHeight: 640
+                    },
+                    {#optional: [{
+                        sourceId: videoSource
+                    }]#}
+                }
+                {#video: false#}
+            };
+
+            try {
+
+                navigator.mediaDevices.getUserMedia(constraints)
+                    .then(onSuccess)
+                    .catch(onError);
+
+            } catch (e) {
+
+                // access to media - support in Mozilla and chrome and opera
+                navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia
+                    || navigator.mozGetUserMedia;
+                navigator.getUserMedia(constraints, onSuccess, onError);
+            }
+        };
+
+
+        {#if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+            console.log("enumerateDevices() not supported.");
+
+        }#}
+
+        // List cameras
+
+        const videoSelect = document.querySelector('#camera');
+
+        const getCamera = (sourceInfos) => {
+            for (let i = 0; i< sourceInfos.length; i++){
+                const sourceInfo = sourceInfos[i];
+                let option = document.createElement('option');
+                option.value = sourceInfo.deviceId;
+                if (sourceInfo.kind === "video" || sourceInfo.kind === "videoinput"){
+
+                    option.text = sourceInfo.label || 'camera ' + (videoSelect.length + 1);
+                    videoSelect.appendChild(option);
+                }
+            }
+        };
+
+        // select particular media
+      {#  navigator.mediaDevices.enumerateDevices()
+            .then(getCamera)
+            .catch(function (err) {
+                console.log(err.name + ": " + err.message);
+            });#}
+
+
+        videoSelect.onchange = startStream();
+
+
+
+        const profilePictureCanvas = document.querySelector("#profilePicCanvas");
+        const profilePictureOutput = document.querySelector("#profilePictureOutput");
+        const takePictureButton = document.querySelector("#takeProfilePicBtn");
+
+        takePictureButton.addEventListener('click', function(ev){
+            takeProfilePic();
+            ev.preventDefault();
+        }, false);
+
+        const width = 320;
+        const height = width / (4/3);
+
+        const takeProfilePic = ()=>{
+            const context = profilePictureCanvas.getContext('2d');
+            if (width && height) {
+                profilePictureCanvas.width = width;
+                profilePictureCanvas.height = height;
+                context.drawImage(videoArea, 0, 0, width, height);
+
+                const data = profilePictureCanvas.toDataURL('image/png');
+                profilePictureOutput.setAttribute('src', data);
+            } else {
+                //clearphoto();
+            }
+        };
+
+
+        // chat
+        const message = document.querySelector("#message");
+        const sendMessageBtn = document.querySelector("#send-message-btn");
+
+        const wsUrl = 'WS://127.0.0.1:8383/websocket';
+        const ws = new WebSocket(wsUrl);
+
+
+
+        ws.onopen = function (evt) {
+            console.log('ws open()');
+        };
+        ws.onerror = function (err) {
+            console.error('ws onerror() ERR:', err);
+        };
+        ws.onmessage = function (evt) {
+
+
+            const data = JSON.parse(evt.data);
+            console.log('ws onmessage() data:', data);
+
+            // setup rtc peer connection
+            if (!rtcPeerConnection)
+                startSignalling();
+
+            switch (data.type) {
+                case 'chat':
+                    console.log(data.message);
+                    break;
+
+                case 'user_here':
+                    displaySignalMessage("Signal received : " + data.message);
+                    break;
+                case 'SDP':
+                    displaySignalMessage("Signal received : " + data.message);
+                    {#if (data.message.sdp) {
+                        #}{##}{##}{##}{#if (rtcPeerConnection.remoteDescription.type === "offer") #}{##}{##}{##}{##}{##}{##}{#
+                            rtcPeerConnection.setRemoteDescription(data.message.sdp).then(function () {
+
+                                return rtcPeerConnection.createAnswer();
+
+                            })
+                                .then(function (answer) {
+                                    console.log(" type ==========> " , rtcPeerConnection.remoteDescription.type)
+                                    return rtcPeerConnection.setLocalDescription(answer);
+                                })
+                                .catch(function (e) {
+                                    console.log(e)
+                                    displaySignalMessage(e.name + " " + e.message);
+                                });
+
+                    } else {
+                        console.log(data.message.candidate)
+                        rtcPeerConnection.addIceCandidate(data.message.candidate).catch(function(e){
+                            console.log(e)
+                            displaySignalMessage(e.name + " " + e.message);
+                        });
+                    }#}
+
+
+                        rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(data.message.sdp), function () {
+                            // if we received an offer, we need to answer
+                            if (rtcPeerConnection.remoteDescription.type === "offer")
+                                rtcPeerConnection.createAnswer(sendLocalDesc, function (e) {
+                                    console.log(e)
+                                });
+                            else if(rtcPeerConnection.remoteDescription.type === "answer"){
+                                rtcPeerConnection.setRemoteDescription(data.message.sdp).catch(function(e){console.log(e)})
+                            }
+                        }, function (e) {
+                            console.log(e)
+                        });
+                    
+                    break;
+                case "candidate":
+
+                    console.log("signal received ",  data.message);
+
+                    rtcPeerConnection.addIceCandidate(new RTCIceCandidate(data.message.candidate)).catch(function(e){
+                        console.log(e)
+                    });
+
+                    break;
+
+            }
+
+        };
+
+        sendMessageBtn.addEventListener('click', function(){
+            const msg = message.value;
+            ws.send(JSON.stringify({
+                type: 'chat', 'message': msg, 'room': 'signal_room'
+            }));
+        }, false);
+
+
+        callBtn.addEventListener('click', function(ev){
+            // signals
+            ws.send(JSON.stringify({
+                'type': 'user_here', 'message': 'Are you ready for a call ? ', 'room': 'signal_room'
+            }));
+            ev.preventDefault();
+        }, false);
+
+
+
+        const signalArea = document.querySelector('#signalArea');
+
+        function displaySignalMessage(message){
+            signalArea.innerHTML = signalArea.innerHTML + '<br/>' + message;
+        };
+
+
+        const configuration = {
+            {#iceServers: [{
+                urls: 'stun:stun.l.google.com:19302' // google rtc testing, Notice you should not use in production on the server
+            }]#}
+            iceServers: [
+                {
+                    urls: 'stun:stun.l.google.com:19302' // google rtc testing, Notice you should not use in production on the server
+                },
+              {#  {
+                    urls: "turn:185.211.59.123:5349",
+                    username: "root",
+                    credential: "1234"
+                }#}
+            ]
+        };
+
+        function sendLocalDesc(desc){
+                rtcPeerConnection.setLocalDescription(desc, function(){
+                    displaySignalMessage("send local description");
+                        // Send the offer to the remote peer using the signaling server
+
+                        ws.send(JSON.stringify({
+                            type: 'SDP',
+                            message: {sdp: rtcPeerConnection.localDescription},
+                            room: 'signal_room'
+                        }));
+                }, function(e){
+                    console.log(e)
+                })
+            }
+
+        function startSignalling(){
+            displaySignalMessage("start signalling ....");
+
+            rtcPeerConnection = new RTCPeerConnection(configuration);
+
+            // send any ice candidates to the other peer
+            rtcPeerConnection.onicecandidate = (event) => {
+                if(event.candidate){
+                    ws.send(JSON.stringify(
+                        {
+                            type: 'candidate' , message: {'candidate': event.candidate}, room: 'signal_room'
+                        }))
+                }
+                displaySignalMessage('completed that ice candidate ... ');
+            };
+
+
+
+            // let the "negotiationneeded" event trigger offer generation
+            rtcPeerConnection.onnegotiationneeded = async () => {
+                displaySignalMessage("on negotiation called ");
+                rtcPeerConnection.createOffer().then(function (offer) {
+                    return rtcPeerConnection.setLocalDescription(offer);
+                })
+                    .then(function () {
+                        displaySignalMessage("send local description");
+                        // Send the offer to the remote peer using the signaling server
+
+                        ws.send(JSON.stringify({
+                            type: 'SDP',
+                            message: {sdp: rtcPeerConnection.localDescription},
+                            room: 'signal_room'
+                        }));
+                    })
+                    .catch(function (e) {
+                        displaySignalMessage(e.name + " " + e.message);
+                    });
+            };
+
+
+            // once media for a remote track arrives, show it in the remote video element
+            rtcPeerConnection.ontrack = (event) => {
+              displaySignalMessage("going to add their stream");
+              // don't set srcObject again if it is already set.
+              if (theirVideo.srcObject) return;
+              theirVideo.srcObject = event.streams[0];
+            };
+
+            startStream();
+        };
+
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+.chat-messages{
+    margin: 10px;
+    background-color: lightgray;
+}
+
+.chat-messages div, .send-message-box div{
+    display: inline-block;
+}
+
+
+
